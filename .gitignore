@@ -3,3 +3,4 @@ node_modules/
 *.log
 bot.pid
 .DS_Store
+DEPLOY.md
