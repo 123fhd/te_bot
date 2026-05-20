@@ -1,0 +1,28 @@
+name: Deploy to Azure VM
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH to VM and deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/te_bot
+            git fetch --all
+            git reset --hard origin/main
+            # 如果 package.json 变了就装依赖
+            npm install --omit=dev
+            pm2 restart te-bot --update-env
+            pm2 save
+            echo "Deploy done."
+            pm2 list

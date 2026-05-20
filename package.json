@@ -1,0 +1,14 @@
+{
+  "name": "te-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Telegram bot using an OpenAI-compatible public API.",
+  "main": "src/bot.js",
+  "scripts": {
+    "start": "node src/bot.js",
+    "check": "node --check src/bot.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
