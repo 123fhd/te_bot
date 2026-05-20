@@ -1,4 +1,4 @@
-name: Deploy to Azure VM
+name: Deploy
 
 on:
   push:
@@ -7,37 +7,23 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up SSH
+      - name: Sync to ~/te_bot and restart bot
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
-
-      - name: Sync code to VM
-        run: |
-          rsync -avz --delete \
+          rsync -av --delete \
             --exclude='.git' \
             --exclude='.github' \
             --exclude='.env' \
             --exclude='node_modules' \
             --exclude='*.log' \
             --exclude='bot.pid' \
-            ./ ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:~/te_bot/
-
-      - name: Install deps and restart bot
-        run: |
-          ssh ${{ secrets.VM_USER }}@${{ secrets.VM_HOST }} 'bash -s' <<'EOF'
-          set -e
+            "$GITHUB_WORKSPACE/" ~/te_bot/
           cd ~/te_bot
           npm install --omit=dev
           pm2 restart te-bot --update-env || pm2 start src/bot.js --name te-bot --time
           pm2 save
           echo "=== Deploy done ==="
           pm2 list
-          EOF
