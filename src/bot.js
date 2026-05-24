@@ -21,6 +21,10 @@ const config = {
   responseMaxTokens: Number(process.env.RESPONSE_MAX_TOKENS || 1000),
   streamEnabled: process.env.STREAM_ENABLED !== "false", // 默认开启
   streamEditIntervalMs: Number(process.env.STREAM_EDIT_INTERVAL_MS || 500), // 编辑节流间隔
+  azureSpeechKey: process.env.AZURE_SPEECH_KEY || "",
+  azureSpeechRegion: process.env.AZURE_SPEECH_REGION || "",
+  azureTtsVoice: process.env.AZURE_TTS_VOICE || "zh-CN-XiaoxiaoNeural",
+  azureTtsMaxChars: Number(process.env.AZURE_TTS_MAX_CHARS || 1000),
 };
 
 const telegramApi = `https://api.telegram.org/bot${config.telegramToken}`;
@@ -73,6 +77,7 @@ async function handleUpdate(update) {
       "",
       "Send any question to call the AI API.",
       "/image prompt - generate an image",
+      "/tts text - text-to-speech (Azure)",
       "/reset - clear chat memory",
       "/model - show current model",
       "/stream on|off - toggle streaming",
@@ -103,6 +108,27 @@ async function handleUpdate(update) {
     } else {
       const status = config.streamEnabled ? "ON" : "OFF";
       await sendMessage(chatId, `Usage: /stream on|off\nCurrent: ${status}`);
+    }
+    return;
+  }
+
+  const ttsText = parseTtsPrompt(text);
+  if (ttsText !== null) {
+    if (!ttsText) {
+      await sendMessage(chatId, "用法: /tts 要朗读的文字");
+      return;
+    }
+    if (!config.azureSpeechKey || !config.azureSpeechRegion) {
+      await sendMessage(chatId, "未配置 Azure TTS。请在 .env 设置 AZURE_SPEECH_KEY 与 AZURE_SPEECH_REGION。");
+      return;
+    }
+    await telegram("sendChatAction", { chat_id: chatId, action: "record_voice" });
+    try {
+      const audio = await synthesizeAzureTts(ttsText);
+      await sendVoiceMessage(chatId, audio);
+    } catch (error) {
+      console.error("TTS error:", error);
+      await sendMessage(chatId, formatAzureTtsError(error));
     }
     return;
   }
@@ -440,6 +466,71 @@ async function generateImageWithChat(prompt) {
 }
 
 // ─────────────────────────────────────────────
+//  Azure TTS
+// ─────────────────────────────────────────────
+
+async function synthesizeAzureTts(text) {
+  const clipped = text.slice(0, config.azureTtsMaxChars);
+  const ssml = buildSsml(clipped, config.azureTtsVoice);
+  const url = `https://${config.azureSpeechRegion}.tts.speech.microsoft.com/cognitiveservices/v1`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Ocp-Apim-Subscription-Key": config.azureSpeechKey,
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": "ogg-48khz-16bit-mono-opus",
+        "User-Agent": "te-bot",
+      },
+      body: ssml,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`Azure TTS ${response.status} ${body || response.statusText}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("Azure TTS request timed out");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function buildSsml(text, voice) {
+  const lang = voice.slice(0, 5);
+  const safe = String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+  return `<speak version='1.0' xml:lang='${lang}'><voice name='${voice}'>${safe}</voice></speak>`;
+}
+
+async function sendVoiceMessage(chatId, buffer) {
+  await telegramMultipart(
+    "sendVoice",
+    { chat_id: String(chatId) },
+    {
+      voice: {
+        filename: "voice.ogg",
+        contentType: "audio/ogg",
+        buffer,
+      },
+    },
+  );
+}
+
+// ─────────────────────────────────────────────
 //  Telegram 工具函数
 // ─────────────────────────────────────────────
 
@@ -646,6 +737,34 @@ function parseImagePrompt(text) {
   }
 
   return "";
+}
+
+function parseTtsPrompt(text) {
+  const trimmed = text.trim();
+  const commands = ["/tts", "/voice", "朗读", "读一下"];
+
+  for (const command of commands) {
+    if (trimmed === command) return "";
+    if (trimmed.startsWith(`${command} `)) {
+      return trimmed.slice(command.length).trim();
+    }
+  }
+
+  return null;
+}
+
+function formatAzureTtsError(error) {
+  const msg = String(error?.message || error);
+  if (msg.includes("401") || msg.includes("403")) {
+    return "Azure TTS 鉴权失败,请检查 AZURE_SPEECH_KEY / AZURE_SPEECH_REGION。";
+  }
+  if (msg.includes("429")) {
+    return "Azure TTS 限流或配额耗尽,稍后再试。";
+  }
+  if (msg.includes("timed out")) {
+    return "Azure TTS 请求超时,请重试。";
+  }
+  return `Azure TTS 失败: ${msg}`;
 }
 
 function trimTelegramCaption(text) {
