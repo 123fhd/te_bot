@@ -408,6 +408,8 @@ async function sendMessageStream(chatId, text) {
       await sendMessage(chatId, chunks[i]);
     }
   }
+
+  return finalContent;
 }
 
 // ─────────────────────────────────────────────
@@ -578,17 +580,31 @@ async function handleVoiceMessage(message) {
 
   await sendMessage(chatId, `🎙️ 你说: ${transcript}`);
 
+  let aiReply = "";
   try {
     if (config.streamEnabled) {
-      await sendMessageStream(chatId, transcript);
+      aiReply = await sendMessageStream(chatId, transcript);
     } else {
       await telegram("sendChatAction", { chat_id: chatId, action: "typing" });
-      const reply = await askAi(chatId, transcript);
-      await sendMessage(chatId, reply);
+      aiReply = await askAi(chatId, transcript);
+      await sendMessage(chatId, aiReply);
     }
   } catch (error) {
     console.error("AI error:", error);
     await sendMessage(chatId, formatAiError(error));
+    return;
+  }
+
+  // 语音进→语音出:把 AI 回复也合成成语音发回
+  if (aiReply) {
+    try {
+      await telegram("sendChatAction", { chat_id: chatId, action: "record_voice" });
+      const audio = await synthesizeAzureTts(aiReply);
+      await sendVoiceMessage(chatId, audio);
+    } catch (error) {
+      console.error("Auto-TTS error:", error);
+      // 文字已经发了,TTS 失败不再骚扰用户
+    }
   }
 }
 
