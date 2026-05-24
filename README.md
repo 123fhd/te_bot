@@ -13,16 +13,21 @@ AI_API_KEY=公益站Key
 AI_MODEL=模型名
 ```
 
-### Azure TTS（可选）
+### Azure TTS / STT（可选）
 
-启用 `/tts` 语音合成需要在 `.env` 追加：
+启用语音功能(发语音转文字 + `/tts` 朗读)需要在 `.env` 追加：
 
 ```env
 AZURE_SPEECH_KEY=你的Azure语音Key
 AZURE_SPEECH_REGION=eastus
 AZURE_TTS_VOICE=zh-CN-XiaoxiaoNeural
 AZURE_TTS_MAX_CHARS=1000
+AZURE_STT_LANGUAGE=zh-CN
 ```
+
+TTS 与 STT **共用同一个 Speech 资源**,免费层每月各有 50 万字符 / 5 小时音频。
+
+`AZURE_STT_LANGUAGE` 常用值:`zh-CN`(普通话) `en-US`(美式英语) `ja-JP`(日语) `zh-HK`(粤语)。
 
 常用 voice：
 
@@ -44,6 +49,7 @@ npm start
 ## 指令
 
 - `/start` 或 `/help`: 查看帮助
+- 发送语音消息: 自动转文字并由 AI 回复(Azure STT)
 - `/image <提示>`: 生成图片
 - `/tts <文字>`: Azure 朗读为语音气泡
 - `/reset`: 清空当前聊天记忆

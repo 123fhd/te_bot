@@ -25,6 +25,7 @@ const config = {
   azureSpeechRegion: process.env.AZURE_SPEECH_REGION || "",
   azureTtsVoice: process.env.AZURE_TTS_VOICE || "zh-CN-XiaoxiaoNeural",
   azureTtsMaxChars: Number(process.env.AZURE_TTS_MAX_CHARS || 1000),
+  azureSttLanguage: process.env.AZURE_STT_LANGUAGE || "zh-CN",
 };
 
 const telegramApi = `https://api.telegram.org/bot${config.telegramToken}`;
@@ -64,7 +65,14 @@ async function main() {
 
 async function handleUpdate(update) {
   const message = update.message;
-  if (!message || !message.chat || !message.text) return;
+  if (!message || !message.chat) return;
+
+  if (message.voice && !message.text) {
+    await handleVoiceMessage(message);
+    return;
+  }
+
+  if (!message.text) return;
 
   const chatId = message.chat.id;
   const text = message.text.trim();
@@ -76,6 +84,7 @@ async function handleUpdate(update) {
       "Bot is online.",
       "",
       "Send any question to call the AI API.",
+      "Send a voice message - I'll transcribe and reply (Azure STT)",
       "/image prompt - generate an image",
       "/tts text - text-to-speech (Azure)",
       "/reset - clear chat memory",
@@ -531,6 +540,120 @@ async function sendVoiceMessage(chatId, buffer) {
 }
 
 // ─────────────────────────────────────────────
+//  Azure STT (语音转文字)
+// ─────────────────────────────────────────────
+
+async function handleVoiceMessage(message) {
+  const chatId = message.chat.id;
+  const from = message.from?.username || message.from?.first_name || "unknown";
+  const duration = message.voice?.duration || 0;
+  console.log(`Voice from ${from} (${chatId}): ${duration}s`);
+
+  if (!config.azureSpeechKey || !config.azureSpeechRegion) {
+    await sendMessage(chatId, "未配置 Azure 语音服务。请在 .env 设置 AZURE_SPEECH_KEY 与 AZURE_SPEECH_REGION。");
+    return;
+  }
+
+  if (duration > 58) {
+    await sendMessage(chatId, "语音超过 60 秒,Azure STT 短音频接口不支持。请发短一点的。");
+    return;
+  }
+
+  await telegram("sendChatAction", { chat_id: chatId, action: "typing" });
+
+  let transcript = "";
+  try {
+    const audioBuffer = await downloadTelegramFile(message.voice.file_id);
+    transcript = await transcribeAzureStt(audioBuffer);
+  } catch (error) {
+    console.error("STT error:", error);
+    await sendMessage(chatId, formatAzureSttError(error));
+    return;
+  }
+
+  if (!transcript) {
+    await sendMessage(chatId, "🎙️ 没听清,请再说一次。");
+    return;
+  }
+
+  await sendMessage(chatId, `🎙️ 你说: ${transcript}`);
+
+  try {
+    if (config.streamEnabled) {
+      await sendMessageStream(chatId, transcript);
+    } else {
+      await telegram("sendChatAction", { chat_id: chatId, action: "typing" });
+      const reply = await askAi(chatId, transcript);
+      await sendMessage(chatId, reply);
+    }
+  } catch (error) {
+    console.error("AI error:", error);
+    await sendMessage(chatId, formatAiError(error));
+  }
+}
+
+async function downloadTelegramFile(fileId) {
+  const fileInfo = await telegram("getFile", { file_id: fileId });
+  if (!fileInfo.file_path) throw new Error("Telegram getFile 未返回 file_path");
+
+  const url = `https://api.telegram.org/file/bot${config.telegramToken}/${fileInfo.file_path}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`Telegram download ${response.status}`);
+    return Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("Telegram download timed out");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function transcribeAzureStt(audioBuffer) {
+  const url = `https://${config.azureSpeechRegion}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=${encodeURIComponent(config.azureSttLanguage)}&format=simple`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Ocp-Apim-Subscription-Key": config.azureSpeechKey,
+        "Content-Type": "audio/ogg; codecs=opus",
+        "Accept": "application/json",
+        "User-Agent": "te-bot",
+      },
+      body: audioBuffer,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`Azure STT ${response.status} ${body || response.statusText}`);
+    }
+
+    const data = await response.json();
+    const status = data?.RecognitionStatus;
+    if (status === "Success") {
+      return String(data.DisplayText || "").trim();
+    }
+    if (status === "NoMatch" || status === "InitialSilenceTimeout" || status === "BabbleTimeout") {
+      return "";
+    }
+    throw new Error(`Azure STT 识别失败: ${status || "unknown"}`);
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("Azure STT request timed out");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// ─────────────────────────────────────────────
 //  Telegram 工具函数
 // ─────────────────────────────────────────────
 
@@ -765,6 +888,20 @@ function formatAzureTtsError(error) {
     return "Azure TTS 请求超时,请重试。";
   }
   return `Azure TTS 失败: ${msg}`;
+}
+
+function formatAzureSttError(error) {
+  const msg = String(error?.message || error);
+  if (msg.includes("401") || msg.includes("403")) {
+    return "Azure STT 鉴权失败,请检查 AZURE_SPEECH_KEY / AZURE_SPEECH_REGION。";
+  }
+  if (msg.includes("429")) {
+    return "Azure STT 限流或配额耗尽,稍后再试。";
+  }
+  if (msg.includes("timed out")) {
+    return "语音识别超时,请重试。";
+  }
+  return `语音识别失败: ${msg}`;
 }
 
 function trimTelegramCaption(text) {
