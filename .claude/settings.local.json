@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(npm run *)",
-      "Bash(curl -X POST \"https://jiuuij.de5.net/v1/images/generations\" -H \"Authorization: Bearer sk-Hch1opEZaqWvBAlREHdnsiuZ3dyrQTUp88UbLdtyqE4RRl4v\" -H \"Content-Type: application/json\" -d '{\"model\":\"grok-imagine-image-lite\",\"prompt\":\"a cat\",\"size\":\"1024x1024\",\"n\":1}' --max-time 30)",
-      "Bash(curl -X POST \"https://jiuuij.de5.net/v1/chat/completions\" -H \"Authorization: Bearer sk-Hch1opEZaqWvBAlREHdnsiuZ3dyrQTUp88UbLdtyqE4RRl4v\" -H \"Content-Type: application/json\" -d '{\"model\":\"grok-imagine-image-lite\",\"messages\":[{\"role\":\"user\",\"content\":\"a cat\"}],\"max_tokens\":100}' --max-time 30)"
-    ]
-  }
-}

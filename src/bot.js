@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { createFunReply } = require("./fun");
 
 loadEnv(path.join(__dirname, "..", ".env"));
 
@@ -86,6 +87,9 @@ async function handleUpdate(update) {
       "Send any question to call the AI API.",
       "Send a voice message - I'll transcribe and reply (Azure STT)",
       "/image prompt - generate an image",
+      "/fortune - daily fortune",
+      "/choose A | B | C - pick one option",
+      "/roll 2d6 - roll dice",
       "/tts text - text-to-speech (Azure)",
       "/reset - clear chat memory",
       "/model - show current model",
@@ -118,6 +122,12 @@ async function handleUpdate(update) {
       const status = config.streamEnabled ? "ON" : "OFF";
       await sendMessage(chatId, `Usage: /stream on|off\nCurrent: ${status}`);
     }
+    return;
+  }
+
+  const funReply = createFunReply(text, { chatId });
+  if (funReply !== null) {
+    await sendMessage(chatId, funReply);
     return;
   }
 

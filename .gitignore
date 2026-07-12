@@ -4,3 +4,4 @@ node_modules/
 bot.pid
 .DS_Store
 DEPLOY.md
+.claude/settings.local.json

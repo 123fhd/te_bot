@@ -6,7 +6,9 @@
   "main": "src/bot.js",
   "scripts": {
     "start": "node src/bot.js",
-    "check": "node --check src/bot.js"
+    "check": "node scripts/check-encoding.js && node --check src/bot.js && node --check src/fun.js && node --test",
+    "check:encoding": "node scripts/check-encoding.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=18"
