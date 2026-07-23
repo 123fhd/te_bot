@@ -167,6 +167,17 @@ async function askAiStream(chatId, text, onChunk, options = {}) {
   return fullContent;
 }
 
+/** Shown while waiting for the first stream tokens. */
+const STREAM_PLACEHOLDER = "思考中…";
+/** When the model returns no text. */
+const STREAM_EMPTY_REPLY = "没有生成内容，请再试一次。";
+/** Placeholder after edit failed and full reply was sent below. */
+const STREAM_PLACEHOLDER_FALLBACK = "↓ 完整回复见下方";
+/** Extra notice when live edits failed and content was re-sent. */
+const STREAM_FALLBACK_HINT = "⚠️ 消息刷新受阻，已改为完整发送。";
+/** Notice when mid-stream edits failed but the final edit recovered. */
+const STREAM_RECOVERED_HINT = "⚠️ 流式显示曾卡顿，完整内容已更新在上方。";
+
 /**
  * @param {string} chatId
  * @param {string} text
@@ -175,15 +186,18 @@ async function askAiStream(chatId, text, onChunk, options = {}) {
 async function sendMessageStream(chatId, text, options = {}) {
   const placeholder = await telegram("sendMessage", {
     chat_id: chatId,
-    text: ".",
+    text: STREAM_PLACEHOLDER,
     disable_web_page_preview: true,
   });
 
   const messageId = placeholder.message_id;
-  let lastEditedText = "";
+  /** Last text successfully written to the placeholder message. */
+  let lastEditedText = STREAM_PLACEHOLDER;
   let lastEditTime = 0;
   let editTimer = null;
   let finalContent = "";
+  let editFailureCount = 0;
+  let fallbackUsed = false;
 
   const throttledEdit = (content) => {
     finalContent = content;
@@ -191,44 +205,96 @@ async function sendMessageStream(chatId, text, options = {}) {
     const elapsed = now - lastEditTime;
 
     if (elapsed >= config.streamEditIntervalMs) {
-      doEdit(content);
+      void doEdit(content);
     } else if (!editTimer) {
       editTimer = setTimeout(() => {
         editTimer = null;
         if (finalContent !== lastEditedText) {
-          doEdit(finalContent);
+          void doEdit(finalContent);
         }
       }, config.streamEditIntervalMs - elapsed);
     }
   };
 
+  /**
+   * @param {string} content
+   * @returns {Promise<boolean>} true if Telegram accepted the edit
+   */
   const doEdit = async (content) => {
-    if (content === lastEditedText) return;
-    lastEditedText = content;
-    lastEditTime = Date.now();
+    const textToShow = content || STREAM_PLACEHOLDER;
+    if (textToShow === lastEditedText) return true;
 
     try {
       await telegram("editMessageText", {
         chat_id: chatId,
         message_id: messageId,
-        text: content || ".",
+        text: textToShow,
         disable_web_page_preview: true,
       });
+      lastEditedText = textToShow;
+      lastEditTime = Date.now();
+      return true;
     } catch (error) {
-      if (String(error.message).includes("429")) {
-        console.warn("Telegram edit rate limited, skipping chunk");
+      editFailureCount += 1;
+      const message = String(error?.message || error);
+      if (message.includes("429")) {
+        console.warn("Telegram edit rate limited, will retry later");
       } else {
-        console.error("Edit message error:", error.message);
+        console.error("Edit message error:", message);
       }
+      // Do not update lastEditedText — same content can be retried.
+      return false;
     }
+  };
+
+  /**
+   * Make sure the user can see `content` even if editMessageText keeps failing.
+   * @param {string} content
+   */
+  const deliverVisibleText = async (content) => {
+    const textToShow = content || STREAM_EMPTY_REPLY;
+    const chunks = splitTelegramText(textToShow);
+    const edited = await doEdit(chunks[0]);
+
+    if (edited) {
+      for (let i = 1; i < chunks.length; i += 1) {
+        await sendMessage(chatId, chunks[i]);
+      }
+      return true;
+    }
+
+    // Keep the old bubble informative; put the full reply in new messages.
+    fallbackUsed = true;
+    await doEdit(STREAM_PLACEHOLDER_FALLBACK);
+    await sendMessage(chatId, chunks[0]);
+    for (let i = 1; i < chunks.length; i += 1) {
+      await sendMessage(chatId, chunks[i]);
+    }
+    return false;
   };
 
   try {
     await askAiStream(chatId, text, throttledEdit, options);
   } catch (error) {
     console.error("Stream AI error:", error);
-    await doEdit(formatAiError(error));
-    return;
+    if (editTimer) {
+      clearTimeout(editTimer);
+      editTimer = null;
+    }
+
+    const errorText = formatAiError(error);
+    // Failures before this error edit should still count toward feedback.
+    const failuresBeforeError = editFailureCount;
+    const ok = await doEdit(errorText);
+    if (!ok) {
+      fallbackUsed = true;
+      await doEdit(STREAM_PLACEHOLDER_FALLBACK);
+      await sendMessage(chatId, errorText);
+      await sendMessage(chatId, STREAM_FALLBACK_HINT);
+    } else if (failuresBeforeError > 0) {
+      await sendMessage(chatId, STREAM_RECOVERED_HINT);
+    }
+    return errorText;
   }
 
   if (editTimer) {
@@ -236,28 +302,28 @@ async function sendMessageStream(chatId, text, options = {}) {
     editTimer = null;
   }
 
-  if (finalContent !== lastEditedText) {
-    try {
-      await telegram("editMessageText", {
-        chat_id: chatId,
-        message_id: messageId,
-        text: finalContent,
-        disable_web_page_preview: true,
-      });
-    } catch {
-      // ignore final edit failure
+  const trimmed = String(finalContent || "").trim();
+  if (!trimmed) {
+    const failuresBefore = editFailureCount;
+    await deliverVisibleText(STREAM_EMPTY_REPLY);
+    if (fallbackUsed) {
+      await sendMessage(chatId, STREAM_FALLBACK_HINT);
+    } else if (failuresBefore > 0) {
+      await sendMessage(chatId, STREAM_RECOVERED_HINT);
     }
+    return "";
   }
 
-  if (finalContent.length > 4096) {
-    const chunks = splitTelegramText(finalContent);
-    await doEdit(chunks[0]);
-    for (let i = 1; i < chunks.length; i++) {
-      await sendMessage(chatId, chunks[i]);
-    }
+  const failuresBeforeFinal = editFailureCount;
+  await deliverVisibleText(trimmed);
+
+  if (fallbackUsed) {
+    await sendMessage(chatId, STREAM_FALLBACK_HINT);
+  } else if (failuresBeforeFinal > 0) {
+    await sendMessage(chatId, STREAM_RECOVERED_HINT);
   }
 
-  return finalContent;
+  return trimmed;
 }
 
 /**
@@ -282,4 +348,9 @@ module.exports = {
   askAiStream,
   sendMessageStream,
   replyWithAi,
+  STREAM_PLACEHOLDER,
+  STREAM_EMPTY_REPLY,
+  STREAM_PLACEHOLDER_FALLBACK,
+  STREAM_FALLBACK_HINT,
+  STREAM_RECOVERED_HINT,
 };
