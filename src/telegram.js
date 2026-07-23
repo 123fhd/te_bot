@@ -58,7 +58,7 @@ async function sendGeneratedImage(chatId, image, prompt) {
   );
 }
 
-async function downloadTelegramFile(fileId) {
+async function getTelegramFile(fileId) {
   const fileInfo = await telegram("getFile", { file_id: fileId });
   if (!fileInfo.file_path) throw new Error("Telegram getFile 未返回 file_path");
 
@@ -69,13 +69,22 @@ async function downloadTelegramFile(fileId) {
   try {
     const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) throw new Error(`Telegram download ${response.status}`);
-    return Buffer.from(await response.arrayBuffer());
+    return {
+      buffer: Buffer.from(await response.arrayBuffer()),
+      filePath: fileInfo.file_path,
+      fileSize: fileInfo.file_size,
+    };
   } catch (error) {
     if (error.name === "AbortError") throw new Error("Telegram download timed out");
     throw error;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function downloadTelegramFile(fileId) {
+  const { buffer } = await getTelegramFile(fileId);
+  return buffer;
 }
 
 async function telegram(method, payload = {}) {
@@ -123,6 +132,7 @@ module.exports = {
   sendMessage,
   sendVoiceMessage,
   sendGeneratedImage,
+  getTelegramFile,
   downloadTelegramFile,
   telegram,
   telegramMultipart,

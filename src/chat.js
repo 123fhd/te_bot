@@ -3,7 +3,12 @@
 const { config } = require("./config");
 const { fetchJson } = require("./http");
 const { telegram, sendMessage } = require("./telegram");
-const { formatAiError, splitTelegramText } = require("./util");
+const {
+  formatAiError,
+  splitTelegramText,
+  historyTextForVision,
+  buildUserContent,
+} = require("./util");
 
 const chatHistories = new Map();
 
@@ -11,12 +16,35 @@ function clearChatHistory(chatId) {
   chatHistories.delete(chatId);
 }
 
-async function askAi(chatId, text) {
+function resolveModel(hasImage) {
+  return hasImage ? config.visionModel : config.model;
+}
+
+function appendHistory(chatId, userText, assistantText) {
   const history = chatHistories.get(chatId) || [];
+  const nextHistory = [
+    ...history,
+    { role: "user", content: userText },
+    { role: "assistant", content: assistantText },
+  ].slice(-config.maxHistoryMessages);
+  chatHistories.set(chatId, nextHistory);
+}
+
+/**
+ * @param {string} chatId
+ * @param {string} text
+ * @param {{ image?: { base64: string, mimeType: string } }} [options]
+ */
+async function askAi(chatId, text, options = {}) {
+  const image = options.image || null;
+  const history = chatHistories.get(chatId) || [];
+  const userContent = buildUserContent(text, image);
+  const historyUserText = image ? historyTextForVision(text) : text;
+
   const messages = [
     { role: "system", content: config.systemPrompt },
     ...history,
-    { role: "user", content: text },
+    { role: "user", content: userContent },
   ];
 
   const response = await fetchJson(`${config.chatApiBaseUrl}/chat/completions`, {
@@ -26,7 +54,7 @@ async function askAi(chatId, text) {
       authorization: `Bearer ${config.chatApiKey}`,
     },
     body: JSON.stringify({
-      model: config.model,
+      model: resolveModel(Boolean(image)),
       messages,
       temperature: 0.7,
       max_tokens: config.responseMaxTokens,
@@ -39,22 +67,27 @@ async function askAi(chatId, text) {
     throw new Error("API did not return choices[0].message.content");
   }
 
-  const nextHistory = [
-    ...history,
-    { role: "user", content: text },
-    { role: "assistant", content },
-  ].slice(-config.maxHistoryMessages);
-
-  chatHistories.set(chatId, nextHistory);
+  // History keeps a text placeholder only — never store base64 payloads.
+  appendHistory(chatId, historyUserText, content);
   return content;
 }
 
-async function askAiStream(chatId, text, onChunk) {
+/**
+ * @param {string} chatId
+ * @param {string} text
+ * @param {(full: string) => void} onChunk
+ * @param {{ image?: { base64: string, mimeType: string } }} [options]
+ */
+async function askAiStream(chatId, text, onChunk, options = {}) {
+  const image = options.image || null;
   const history = chatHistories.get(chatId) || [];
+  const userContent = buildUserContent(text, image);
+  const historyUserText = image ? historyTextForVision(text) : text;
+
   const messages = [
     { role: "system", content: config.systemPrompt },
     ...history,
-    { role: "user", content: text },
+    { role: "user", content: userContent },
   ];
 
   const controller = new AbortController();
@@ -70,7 +103,7 @@ async function askAiStream(chatId, text, onChunk) {
         authorization: `Bearer ${config.chatApiKey}`,
       },
       body: JSON.stringify({
-        model: config.model,
+        model: resolveModel(Boolean(image)),
         messages,
         temperature: 0.7,
         max_tokens: config.responseMaxTokens,
@@ -127,18 +160,18 @@ async function askAiStream(chatId, text, onChunk) {
   }
 
   if (fullContent) {
-    const nextHistory = [
-      ...history,
-      { role: "user", content: text },
-      { role: "assistant", content: fullContent },
-    ].slice(-config.maxHistoryMessages);
-    chatHistories.set(chatId, nextHistory);
+    appendHistory(chatId, historyUserText, fullContent);
   }
 
   return fullContent;
 }
 
-async function sendMessageStream(chatId, text) {
+/**
+ * @param {string} chatId
+ * @param {string} text
+ * @param {{ image?: { base64: string, mimeType: string } }} [options]
+ */
+async function sendMessageStream(chatId, text, options = {}) {
   const placeholder = await telegram("sendMessage", {
     chat_id: chatId,
     text: ".",
@@ -190,7 +223,7 @@ async function sendMessageStream(chatId, text) {
   };
 
   try {
-    await askAiStream(chatId, text, throttledEdit);
+    await askAiStream(chatId, text, throttledEdit, options);
   } catch (error) {
     console.error("Stream AI error:", error);
     await doEdit(formatAiError(error));
@@ -226,13 +259,18 @@ async function sendMessageStream(chatId, text) {
   return finalContent;
 }
 
-async function replyWithAi(chatId, text) {
+/**
+ * @param {string} chatId
+ * @param {string} text
+ * @param {{ image?: { base64: string, mimeType: string } }} [options]
+ */
+async function replyWithAi(chatId, text, options = {}) {
   if (config.streamEnabled) {
-    return sendMessageStream(chatId, text);
+    return sendMessageStream(chatId, text, options);
   }
 
   await telegram("sendChatAction", { chat_id: chatId, action: "typing" });
-  const reply = await askAi(chatId, text);
+  const reply = await askAi(chatId, text, options);
   await sendMessage(chatId, reply);
   return reply;
 }

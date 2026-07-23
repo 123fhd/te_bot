@@ -44,6 +44,65 @@ function parseTtsPrompt(text) {
   return null;
 }
 
+/** Pick the largest Telegram photo size entry. */
+function pickLargestPhoto(photoSizes) {
+  if (!Array.isArray(photoSizes) || photoSizes.length === 0) return null;
+  return photoSizes.reduce((best, item) => {
+    const bestArea = (best.width || 0) * (best.height || 0);
+    const area = (item.width || 0) * (item.height || 0);
+    if (area > bestArea) return item;
+    if (area === bestArea && (item.file_size || 0) > (best.file_size || 0)) return item;
+    return best;
+  });
+}
+
+function isImageDocument(document) {
+  if (!document) return false;
+  const mime = String(document.mime_type || "").toLowerCase();
+  if (mime.startsWith("image/")) return true;
+  const name = String(document.file_name || "").toLowerCase();
+  return /\.(jpe?g|png|gif|webp|bmp)$/i.test(name);
+}
+
+function mimeTypeFromPath(filePath, fallbackMime = "image/jpeg") {
+  const value = String(filePath || "").toLowerCase();
+  if (value.endsWith(".png")) return "image/png";
+  if (value.endsWith(".webp")) return "image/webp";
+  if (value.endsWith(".gif")) return "image/gif";
+  if (value.endsWith(".bmp")) return "image/bmp";
+  if (value.endsWith(".jpg") || value.endsWith(".jpeg")) return "image/jpeg";
+  if (fallbackMime && String(fallbackMime).startsWith("image/")) return fallbackMime;
+  return "image/jpeg";
+}
+
+/** Text stored in chat history when user sent an image (no base64). */
+function historyTextForVision(caption) {
+  const text = String(caption || "").trim();
+  return text ? `[用户发送了一张图片] ${text}` : "[用户发送了一张图片]";
+}
+
+const DEFAULT_VISION_PROMPT = "请描述这张图片的内容，并简要说说你的看法。";
+
+/**
+ * Build OpenAI-compatible user content for text or vision messages.
+ * @param {string} text
+ * @param {{ base64: string, mimeType: string } | null | undefined} image
+ */
+function buildUserContent(text, image) {
+  if (!image) return text;
+
+  const prompt = String(text || "").trim() || DEFAULT_VISION_PROMPT;
+  return [
+    { type: "text", text: prompt },
+    {
+      type: "image_url",
+      image_url: {
+        url: `data:${image.mimeType};base64,${image.base64}`,
+      },
+    },
+  ];
+}
+
 function formatAiError(error) {
   const message = String(error?.message || error);
   if (message.includes("sensitive_words_detected")) {
@@ -106,6 +165,12 @@ module.exports = {
   splitTelegramText,
   parseImagePrompt,
   parseTtsPrompt,
+  pickLargestPhoto,
+  isImageDocument,
+  mimeTypeFromPath,
+  historyTextForVision,
+  buildUserContent,
+  DEFAULT_VISION_PROMPT,
   formatAiError,
   formatAzureTtsError,
   formatAzureSttError,

@@ -65,6 +65,7 @@ src/
 ## 指令
 
 - `/start` 或 `/help`: 查看帮助
+- 发送照片或图片文件: 看图理解并回复（Vision，可带说明文字）
 - 发送语音消息: 自动转文字并由 AI 回复(Azure STT)
 - `/image <提示>`: 生成图片
 - `/fortune`: 生成每日固定的今日运势
@@ -74,3 +75,17 @@ src/
 - `/reset`: 清空当前聊天记忆
 - `/model`: 查看当前模型
 - `/stream on|off`: 开关流式输出
+
+### 看图（Vision）
+
+直接发送 **压缩图 / 相册照片 / 图片文件**（可选 caption）。机器人会下载图片，以 OpenAI 兼容的多模态格式调用聊天 API。
+
+```env
+VISION_ENABLED=true
+VISION_MODEL=gpt-4o-mini
+VISION_MAX_BYTES=4194304
+```
+
+- 默认开启；模型需支持识图（`VISION_MODEL` 默认跟 `CHAT_MODEL` / `AI_MODEL`）
+- 会话历史只记录「发过图」的文字占位，**不保存 base64**
+- 图片超过 `VISION_MAX_BYTES`（默认约 4MB）会拒绝并提示压缩

@@ -5,18 +5,28 @@ const { createFunReply } = require("./fun");
 const { clearChatHistory, replyWithAi } = require("./chat");
 const { generateImage } = require("./image");
 const { handleVoiceMessage, synthesizeAzureTts } = require("./speech");
-const { telegram, sendMessage, sendVoiceMessage, sendGeneratedImage } = require("./telegram");
+const {
+  telegram,
+  sendMessage,
+  sendVoiceMessage,
+  sendGeneratedImage,
+  getTelegramFile,
+} = require("./telegram");
 const {
   parseImagePrompt,
   parseTtsPrompt,
   formatAiError,
   formatAzureTtsError,
+  pickLargestPhoto,
+  isImageDocument,
+  mimeTypeFromPath,
 } = require("./util");
 
 const HELP_TEXT = [
   "Bot is online.",
   "",
   "Send any question to call the AI API.",
+  "Send a photo - I'll look at it and reply (Vision)",
   "Send a voice message - I'll transcribe and reply (Azure STT)",
   "/image prompt - generate an image",
   "/fortune - daily fortune",
@@ -34,6 +44,28 @@ async function handleUpdate(update) {
 
   if (message.voice && !message.text) {
     await handleVoiceMessage(message);
+    return;
+  }
+
+  if (message.photo && message.photo.length) {
+    const photo = pickLargestPhoto(message.photo);
+    await handleVisionMessage(message, {
+      fileId: photo?.file_id,
+      reportedSize: photo?.file_size,
+      caption: message.caption || "",
+      mimeHint: "image/jpeg",
+    });
+    return;
+  }
+
+  if (message.document && isImageDocument(message.document)) {
+    await handleVisionMessage(message, {
+      fileId: message.document.file_id,
+      reportedSize: message.document.file_size,
+      caption: message.caption || "",
+      mimeHint: message.document.mime_type || "image/jpeg",
+      fileName: message.document.file_name,
+    });
     return;
   }
 
@@ -57,9 +89,15 @@ async function handleUpdate(update) {
 
   if (text === "/model") {
     const streamStatus = config.streamEnabled ? "ON" : "OFF";
+    const visionStatus = config.visionEnabled ? "ON" : "OFF";
     await sendMessage(
       chatId,
-      `Chat model: ${config.model}\nImage model: ${config.imageModel}\nStream: ${streamStatus}`,
+      [
+        `Chat model: ${config.model}`,
+        `Vision model: ${config.visionModel} (${visionStatus})`,
+        `Image model: ${config.imageModel}`,
+        `Stream: ${streamStatus}`,
+      ].join("\n"),
     );
     return;
   }
@@ -131,7 +169,70 @@ async function handleUpdate(update) {
   }
 }
 
+/**
+ * Download a Telegram image and ask the vision-capable chat model.
+ * @param {object} message
+ * @param {{ fileId?: string, reportedSize?: number, caption?: string, mimeHint?: string, fileName?: string }} meta
+ */
+async function handleVisionMessage(message, meta) {
+  const chatId = message.chat.id;
+  const from = message.from?.username || message.from?.first_name || "unknown";
+  const caption = String(meta.caption || "").trim();
+  console.log(`Photo from ${from} (${chatId}): ${caption || "(no caption)"}`);
+
+  if (!config.visionEnabled) {
+    await sendMessage(chatId, "看图功能已关闭。可在 .env 设置 VISION_ENABLED=true。");
+    return;
+  }
+
+  if (!meta.fileId) {
+    await sendMessage(chatId, "没读到图片，请再发一次。");
+    return;
+  }
+
+  if (meta.reportedSize && meta.reportedSize > config.visionMaxBytes) {
+    await sendMessage(
+      chatId,
+      `图片太大了（上限约 ${Math.round(config.visionMaxBytes / (1024 * 1024))}MB），请压缩后再发。`,
+    );
+    return;
+  }
+
+  await telegram("sendChatAction", { chat_id: chatId, action: "typing" });
+
+  let file;
+  try {
+    file = await getTelegramFile(meta.fileId);
+  } catch (error) {
+    console.error("Vision download error:", error);
+    await sendMessage(chatId, `下载图片失败: ${error.message || error}`);
+    return;
+  }
+
+  if (file.buffer.length > config.visionMaxBytes) {
+    await sendMessage(
+      chatId,
+      `图片太大了（上限约 ${Math.round(config.visionMaxBytes / (1024 * 1024))}MB），请压缩后再发。`,
+    );
+    return;
+  }
+
+  const mimeType = mimeTypeFromPath(file.filePath || meta.fileName, meta.mimeHint);
+  const image = {
+    base64: file.buffer.toString("base64"),
+    mimeType,
+  };
+
+  try {
+    await replyWithAi(chatId, caption, { image });
+  } catch (error) {
+    console.error("Vision AI error:", error);
+    await sendMessage(chatId, formatAiError(error));
+  }
+}
+
 module.exports = {
   handleUpdate,
+  handleVisionMessage,
   HELP_TEXT,
 };

@@ -23,6 +23,10 @@ const config = {
   responseMaxTokens: Number(process.env.RESPONSE_MAX_TOKENS || 1000),
   streamEnabled: process.env.STREAM_ENABLED !== "false", // 默认开启
   streamEditIntervalMs: Number(process.env.STREAM_EDIT_INTERVAL_MS || 500), // 编辑节流间隔
+  // 看图（Vision）：走 chat/completions 多模态；需模型支持识图
+  visionEnabled: process.env.VISION_ENABLED !== "false",
+  visionModel: process.env.VISION_MODEL || process.env.CHAT_MODEL || process.env.AI_MODEL || "gpt-4o-mini",
+  visionMaxBytes: Number(process.env.VISION_MAX_BYTES || 4 * 1024 * 1024),
   azureSpeechKey: process.env.AZURE_SPEECH_KEY || "",
   azureSpeechRegion: process.env.AZURE_SPEECH_REGION || "",
   azureTtsVoice: process.env.AZURE_TTS_VOICE || "zh-CN-XiaoxiaoNeural",
