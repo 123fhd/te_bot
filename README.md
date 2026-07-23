@@ -46,6 +46,22 @@ TTS 与 STT **共用同一个 Speech 资源**,免费层每月各有 50 万字符
 npm start
 ```
 
+## 代码结构
+
+```
+src/
+  bot.js       # 入口：长轮询主循环
+  handlers.js  # 消息路由与指令处理
+  chat.js      # AI 对话 / 流式回复 / 会话记忆
+  image.js     # 图片生成
+  speech.js    # Azure TTS / STT
+  telegram.js  # Telegram API 封装
+  config.js    # 环境变量与配置
+  http.js      # fetchJson
+  util.js      # 文本切分、解析、错误格式化
+  fun.js       # 运势 / 选择 / 掷骰
+```
+
 ## 指令
 
 - `/start` 或 `/help`: 查看帮助

@@ -45,7 +45,9 @@ for (const filePath of files) {
   }
 }
 
-const source = fs.readFileSync(path.join("src", "bot.js"), "utf8");
+const srcRoot = path.join("src");
+const sourceFiles = files.filter((filePath) => filePath === srcRoot || filePath.startsWith(`src${path.sep}`) || filePath.startsWith("src/"));
+const source = sourceFiles.map((filePath) => fs.readFileSync(filePath, "utf8")).join("\n");
 const expectedSourceText = [
   "\u9ED8\u8BA4\u5F00\u542F",
   "\u7F16\u8F91\u8282\u6D41\u95F4\u9694",
