@@ -4,6 +4,13 @@ const { config } = require("./config");
 const { createFunReply } = require("./fun");
 const { clearChatHistory, replyWithAi } = require("./chat");
 const { generateImage } = require("./image");
+const {
+  parsePersonaCommand,
+  formatPersonaList,
+  formatCurrentPersona,
+  setChatPersona,
+  getChatPersona,
+} = require("./persona");
 const { handleVoiceMessage, synthesizeAzureTts } = require("./speech");
 const {
   telegram,
@@ -28,6 +35,8 @@ const HELP_TEXT = [
   "Send any question to call the AI API.",
   "Send a photo - I'll look at it and reply (Vision)",
   "Send a voice message - I'll transcribe and reply (Azure STT)",
+  "/prompt - list personas / switch character",
+  "/prompt 团子 - switch persona (also /persona /人设)",
   "/image prompt - generate an image",
   "/fortune - daily fortune",
   "/choose A | B | C - pick one option",
@@ -90,15 +99,23 @@ async function handleUpdate(update) {
   if (text === "/model") {
     const streamStatus = config.streamEnabled ? "ON" : "OFF";
     const visionStatus = config.visionEnabled ? "ON" : "OFF";
+    const persona = getChatPersona(chatId);
     await sendMessage(
       chatId,
       [
         `Chat model: ${config.model}`,
         `Vision model: ${config.visionModel} (${visionStatus})`,
         `Image model: ${config.imageModel}`,
+        `Persona: ${persona ? `${persona.name} (${persona.id})` : "unknown"}`,
         `Stream: ${streamStatus}`,
       ].join("\n"),
     );
+    return;
+  }
+
+  const personaCommand = parsePersonaCommand(text);
+  if (personaCommand) {
+    await handlePersonaCommand(chatId, personaCommand);
     return;
   }
 
@@ -167,6 +184,41 @@ async function handleUpdate(update) {
     console.error("AI error:", error);
     await sendMessage(chatId, formatAiError(error));
   }
+}
+
+/**
+ * @param {string | number} chatId
+ * @param {{ type: 'list' } | { type: 'show' } | { type: 'set', query: string }} command
+ */
+async function handlePersonaCommand(chatId, command) {
+  if (command.type === "list") {
+    await sendMessage(chatId, formatPersonaList(chatId));
+    return;
+  }
+
+  if (command.type === "show") {
+    await sendMessage(chatId, formatCurrentPersona(chatId));
+    return;
+  }
+
+  const result = setChatPersona(chatId, command.query);
+  if (!result.ok) {
+    await sendMessage(chatId, result.error);
+    return;
+  }
+
+  // Avoid previous persona leaking into the new roleplay.
+  clearChatHistory(chatId);
+  const { persona, changed } = result;
+  const tip = changed ? "已切换人设，聊天记忆已清空。" : "已经是这个人设了（仍已刷新记忆）。";
+  await sendMessage(
+    chatId,
+    [
+      `✅ ${tip}`,
+      `当前：${persona.name}（${persona.id}）`,
+      persona.desc ? `简介：${persona.desc}` : "",
+    ].filter(Boolean).join("\n"),
+  );
 }
 
 /**

@@ -6,7 +6,7 @@
   "main": "src/bot.js",
   "scripts": {
     "start": "node src/bot.js",
-    "check": "node scripts/check-encoding.js && node --check src/bot.js && node --check src/config.js && node --check src/http.js && node --check src/util.js && node --check src/telegram.js && node --check src/chat.js && node --check src/image.js && node --check src/speech.js && node --check src/handlers.js && node --check src/fun.js && node --test",
+    "check": "node scripts/check-encoding.js && node --check src/bot.js && node --check src/config.js && node --check src/http.js && node --check src/util.js && node --check src/telegram.js && node --check src/chat.js && node --check src/image.js && node --check src/speech.js && node --check src/handlers.js && node --check src/persona.js && node --check src/fun.js && node --test",
     "check:encoding": "node scripts/check-encoding.js",
     "test": "node --test"
   },

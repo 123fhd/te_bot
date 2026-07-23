@@ -53,6 +53,7 @@ src/
   bot.js       # 入口：长轮询主循环
   handlers.js  # 消息路由与指令处理
   chat.js      # AI 对话 / 流式回复 / 会话记忆
+  persona.js   # 多人物设定加载与按会话切换
   image.js     # 图片生成
   speech.js    # Azure TTS / STT
   telegram.js  # Telegram API 封装
@@ -60,6 +61,7 @@ src/
   http.js      # fetchJson
   util.js      # 文本切分、解析、错误格式化
   fun.js       # 运势 / 选择 / 掷骰
+prompts/       # 人设文本（*.txt）
 ```
 
 ## 指令
@@ -67,14 +69,38 @@ src/
 - `/start` 或 `/help`: 查看帮助
 - 发送照片或图片文件: 看图理解并回复（Vision，可带说明文字）
 - 发送语音消息: 自动转文字并由 AI 回复(Azure STT)
+- `/prompt` 或 `/persona` 或 `/人设`: 列出人设；`/prompt 团子` 切换
 - `/image <提示>`: 生成图片
 - `/fortune`: 生成每日固定的今日运势
 - `/choose 火锅 | 烧烤 | 炒菜`: 随机选择一个选项
 - `/roll 2d6`: 掷骰子，支持 `d20`、`3d10` 等格式
 - `/tts <文字>`: Azure 朗读为语音气泡
 - `/reset`: 清空当前聊天记忆
-- `/model`: 查看当前模型
+- `/model`: 查看当前模型与人设
 - `/stream on|off`: 开关流式输出
+
+### 多人物设定
+
+人设文件放在 `prompts/*.txt`，头部元数据可选：
+
+```text
+#name: 团子
+#desc: 元气陪伴伙伴
+#aliases: 团子,tuanzi
+
+（正文即 system prompt）
+```
+
+内置示例：`tuanzi`（团子）、`assistant`（助手）、`translator`（翻译官）、`coder`（码农）。
+
+```env
+PROMPTS_DIR=prompts
+DEFAULT_PERSONA=tuanzi
+```
+
+- 按 **chat** 记忆当前人设（进程内，重启后恢复默认）
+- 切换人设会 **清空该聊天记忆**，避免串戏
+- 新增人设：往 `prompts/` 丢一个 `.txt` 后重启 bot 即可
 
 ### 看图（Vision）
 

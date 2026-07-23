@@ -2,6 +2,7 @@
 
 const { config } = require("./config");
 const { fetchJson } = require("./http");
+const { getSystemPrompt } = require("./persona");
 const { telegram, sendMessage } = require("./telegram");
 const {
   formatAiError,
@@ -42,7 +43,7 @@ async function askAi(chatId, text, options = {}) {
   const historyUserText = image ? historyTextForVision(text) : text;
 
   const messages = [
-    { role: "system", content: config.systemPrompt },
+    { role: "system", content: getSystemPrompt(chatId) },
     ...history,
     { role: "user", content: userContent },
   ];
@@ -85,7 +86,7 @@ async function askAiStream(chatId, text, onChunk, options = {}) {
   const historyUserText = image ? historyTextForVision(text) : text;
 
   const messages = [
-    { role: "system", content: config.systemPrompt },
+    { role: "system", content: getSystemPrompt(chatId) },
     ...history,
     { role: "user", content: userContent },
   ];
